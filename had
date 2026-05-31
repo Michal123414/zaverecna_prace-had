@@ -1,0 +1,286 @@
+import pygame
+import random
+import sys
+
+
+# ----------------------------------------- #
+#---- NASTAVENÍ OKNA ----#
+# ----------------------------------------- #
+TILE_SIZE = 50  # velikost jednoho políčka v pixelech
+GRID_WIDTH, GRID_HEIGHT = 10, 10  # počet políček (šířka × výška) hrací plochy
+SCORE_BAR_HEIGHT = 50  # výška horního pásu se skóre v pixelech
+
+WINDOW_WIDTH = GRID_WIDTH * TILE_SIZE
+GAME_AREA_HEIGHT = GRID_HEIGHT * TILE_SIZE
+WINDOW_HEIGHT = GAME_AREA_HEIGHT + SCORE_BAR_HEIGHT  # celkové okno
+
+BASE_FPS = 10
+SPEED_INCREASE = 2
+
+# ----------------------------------------- #
+#---- BARVY ----#
+# ----------------------------------------- #
+SCORE_BAR_COLOR = (50, 90, 50)
+SCORE_TEXT_COLOR = (240, 240, 220)
+
+#   Dvoubarevné pozadí (sudé a liché)
+LIGHT_TILE_COLOR = (170, 215, 90)
+DARK_TILE_COLOR = (160, 205, 75)
+
+# Had a jablko
+SNAKE_BODY_COLOR = (50, 100, 220)
+SNAKE_HEAD_COLOR = (70, 130, 240)
+APPLE_COLOR = (220, 50, 50)
+APPLE_SHINE_COLOR = (255, 130, 130)
+
+# Text a game over
+TEXT_COLOR = (240, 240, 240)
+GAME_OVER_COLOR = (20, 30, 20, 200)
+
+# ----------------------------------------- #
+#---- SMĚR ----#
+# ----------------------------------------- #
+UP = (0, -1)
+DOWN = (0, 1)
+LEFT = (-1, 0)
+RIGHT = (1, 0)
+
+#   Opačné směry – aby se had nemohl otočit o 180°
+OPPOSITE = {UP: DOWN, DOWN: UP, LEFT: RIGHT, RIGHT: LEFT}
+
+
+def random_apple(snake_body):
+    while True:
+        position = (random.randint(0, GRID_WIDTH - 1), random.randint(0, GRID_HEIGHT - 1))
+        if position not in snake_body:
+            return position
+
+
+def draw_rounded_rect(surface, color, rect, radius=6):
+    pygame.draw.rect(surface, color, rect, border_radius=radius)
+
+
+def pixel_x(grid_x):
+    return grid_x * TILE_SIZE
+
+
+def pixel_y(grid_y):
+    return grid_y * TILE_SIZE + SCORE_BAR_HEIGHT
+
+
+def main():
+    pygame.init()
+    pygame.mixer.init()
+    screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
+    pygame.display.set_caption("🐍 Snake")
+    clock = pygame.time.Clock()
+    current_fps = BASE_FPS
+    apple_sound = pygame.mixer.Sound("sounds/jablko_snezeni.wav")
+    game_over_sound = pygame.mixer.Sound("sounds/game_over.wav")
+
+    apple_sound.set_volume(1.0)
+    game_over_sound.set_volume(0.5)
+
+# ----------------------------------------- #
+#---- FONTY ----#
+# ----------------------------------------- #
+
+    FONT_LARGE = 48
+    FONT_MEDIUM = FONT_LARGE // 2  # = 24
+    FONT_SMALL = FONT_LARGE // 3  # = 16
+
+    font_large = pygame.font.SysFont("Segoe UI", FONT_LARGE, bold=True)
+    font_medium = pygame.font.SysFont("Segoe UI", FONT_MEDIUM, bold=True)
+    font_small = pygame.font.SysFont("Segoe UI", FONT_SMALL)
+
+    def reset_game():
+        start = (GRID_WIDTH // 2, GRID_HEIGHT // 2)
+        return {
+            "snake": [start],
+            "direction": RIGHT,
+            "next_direction": RIGHT,
+            "apple": random_apple({start}),
+            "score": 0,
+            "alive": True,
+            "paused": False,
+        }
+
+    game = reset_game()
+
+# ----------------------------------------- #
+#---- HLAVNÍ HRACÍ SMYČKA ----#
+# ----------------------------------------- #
+    while True:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    pygame.quit()
+                    sys.exit()
+
+                #   Restart přes klávesu R
+                if not game["alive"] and event.key == pygame.K_r:
+                    game = reset_game()
+                    current_fps = BASE_FPS
+                    continue
+
+                #   Pauza
+                if event.key == pygame.K_SPACE and game["alive"]:
+                    game["paused"] = not game["paused"]
+                    continue
+
+                #   Ovládání přes klávesy (arrows + WASD)
+                key_direction = {
+                    pygame.K_UP: UP, pygame.K_w: UP,
+                    pygame.K_DOWN: DOWN, pygame.K_s: DOWN,
+                    pygame.K_LEFT: LEFT, pygame.K_a: LEFT,
+                    pygame.K_RIGHT: RIGHT, pygame.K_d: RIGHT,
+                }
+                if event.key in key_direction and game["alive"]:
+                    new_direction = key_direction[event.key]
+                    if new_direction != OPPOSITE.get(game["direction"]):
+                        game["next_direction"] = new_direction
+    # ----------------------------------------- #
+    #---- LOGIKA HRY ----#
+    # ----------------------------------------- #
+
+        if game["alive"] and not game["paused"]:
+            game["direction"] = game["next_direction"]
+            head = game["snake"][0]
+            dx, dy = game["direction"]
+            new_head = (head[0] + dx, head[1] + dy)
+
+            #   Kolize se zdí
+            if not (0 <= new_head[0] < GRID_WIDTH and 0 <= new_head[1] < GRID_HEIGHT):
+                game["alive"] = False
+                game_over_sound.play()
+
+            #   Kolize se sebou
+            elif new_head in game["snake"]:
+                game["alive"] = False
+                game_over_sound.play()
+
+            else:
+                game["snake"].insert(0, new_head)
+
+                #   Jestli snědl jablko
+                if new_head == game["apple"]:
+                    game["score"] += 1
+                    game["apple"] = random_apple(set(game["snake"]))
+                    current_fps = BASE_FPS + (game["score"] // 5) * SPEED_INCREASE
+                    apple_sound.play()
+                else:
+                    game["snake"].pop()  #odstraní ocas
+        # ----------------------------------------- #
+        #---- RENDERING ----#
+        # ----------------------------------------- #
+
+        #   Horní okno se skóre
+        bar_rect = pygame.Rect(0, 0, WINDOW_WIDTH, SCORE_BAR_HEIGHT)
+        pygame.draw.rect(screen, SCORE_BAR_COLOR, bar_rect)
+
+        score_text = font_medium.render(
+            f"Score: {game['score']}", True, SCORE_TEXT_COLOR
+        )
+        score_rect = score_text.get_rect(
+            center=(WINDOW_WIDTH // 2, SCORE_BAR_HEIGHT // 2)
+        )
+        screen.blit(score_text, score_rect)
+
+        #   Dvoubarevné pozadí (sudé/liché)
+        for row in range(GRID_HEIGHT):
+            for col in range(GRID_WIDTH):
+                if (row + col) % 2 == 0:
+                    tile_color = LIGHT_TILE_COLOR
+                else:
+                    tile_color = DARK_TILE_COLOR
+                tile_rect = pygame.Rect(
+                    pixel_x(col), pixel_y(row),
+                    TILE_SIZE, TILE_SIZE
+                )
+                pygame.draw.rect(screen, tile_color, tile_rect)
+
+        #   Jablko
+        ax, ay = game["apple"]
+        apple_rect = pygame.Rect(
+            pixel_x(ax) + 2, pixel_y(ay) + 2,
+            TILE_SIZE - 4, TILE_SIZE - 4
+        )
+        draw_rounded_rect(screen, APPLE_COLOR, apple_rect, 8)
+        shine_rect = pygame.Rect(pixel_x(ax) + 5, pixel_y(ay) + 5, 8, 8)
+        draw_rounded_rect(screen, APPLE_SHINE_COLOR, shine_rect, 6)
+
+        #   Had
+        for i, (sx, sy) in enumerate(game["snake"]):
+            color = SNAKE_HEAD_COLOR if i == 0 else SNAKE_BODY_COLOR
+            segment_rect = pygame.Rect(
+                pixel_x(sx) + 1, pixel_y(sy) + 1,
+                TILE_SIZE - 2, TILE_SIZE - 2
+            )
+            draw_rounded_rect(screen, color, segment_rect, 6)
+
+            #   Oči na hadovi
+            if i == 0:
+                dx, dy = game["direction"]
+                center_x = pixel_x(sx) + TILE_SIZE // 2
+                center_y = pixel_y(sy) + TILE_SIZE // 2
+
+                EYE_RADIUS = max(2, TILE_SIZE // 3)
+                PUPIL_RADIUS = max(1, EYE_RADIUS // 2)
+                offset = EYE_RADIUS // 1    #   Jak daleko jsou oči od středu
+
+                if dx == 0:  #  nahoru/dolu -> oči vlevo a vpravo
+                    eye1 = (center_x - offset, center_y + dy * 3)
+                    eye2 = (center_x + offset, center_y + dy * 3)
+                else:  #    vlevo/vpravo -> oči nahoru a dolu
+                    eye1 = (center_x + dx * 3, center_y - offset)
+                    eye2 = (center_x + dx * 3, center_y + offset)
+                #   Oči
+                pygame.draw.circle(screen, (255, 255, 255), eye1, EYE_RADIUS)
+                pygame.draw.circle(screen, (255, 255, 255), eye2, EYE_RADIUS)
+                #   Zorničky
+                pygame.draw.circle(screen, (20, 20, 40), eye1, PUPIL_RADIUS)
+                pygame.draw.circle(screen, (20, 20, 40), eye2, PUPIL_RADIUS)
+
+        #   Pauza
+        if game["paused"]:
+            pause_text = font_medium.render(
+                "⏸  PAUSE  (spacebar)", True, TEXT_COLOR
+            )
+            game_area_center = SCORE_BAR_HEIGHT + GAME_AREA_HEIGHT // 2
+            pause_rect = pause_text.get_rect(
+                center=(WINDOW_WIDTH // 2, game_area_center)
+            )
+            screen.blit(pause_text, pause_rect)
+
+        #   Game Over
+        if not game["alive"]:
+            overlay = pygame.Surface(
+                (WINDOW_WIDTH, GAME_AREA_HEIGHT), pygame.SRCALPHA
+            )
+            overlay.fill(GAME_OVER_COLOR)
+            screen.blit(overlay, (0, SCORE_BAR_HEIGHT))
+
+            center_x = WINDOW_WIDTH // 2
+            center_y = SCORE_BAR_HEIGHT + GAME_AREA_HEIGHT // 2
+
+            go_text = font_large.render("GAME OVER", True, APPLE_COLOR)
+            screen.blit(go_text, go_text.get_rect(center=(center_x, center_y - 30)))
+
+            sk_text = font_medium.render(
+                f"Score: {game['score']}", True, TEXT_COLOR
+            )
+            screen.blit(sk_text, sk_text.get_rect(center=(center_x, center_y + 20)))
+
+            re_text = font_small.render("Press R to restart", True, TEXT_COLOR)
+            screen.blit(re_text, re_text.get_rect(center=(center_x, center_y + 55)))
+
+        pygame.display.flip()
+        clock.tick(current_fps)
+
+
+if __name__ == "__main__":
+    main()
