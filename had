@@ -14,8 +14,8 @@ WINDOW_WIDTH = GRID_WIDTH * TILE_SIZE
 GAME_AREA_HEIGHT = GRID_HEIGHT * TILE_SIZE
 WINDOW_HEIGHT = GAME_AREA_HEIGHT + SCORE_BAR_HEIGHT  # celkové okno
 
-BASE_FPS = 10
-SPEED_INCREASE = 2
+FPS = 120               # plynulé vykreslování (pevné)
+BASE_MOVE_DELAY = 150  # had se pohne každých 150 ms (výchozí rychlost)
 
 # ----------------------------------------- #
 #---- BARVY ----#
@@ -74,7 +74,11 @@ def main():
     screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
     pygame.display.set_caption("🐍 Snake")
     clock = pygame.time.Clock()
-    current_fps = BASE_FPS
+
+    #   Časovač pohybu (řídí rychlost hada nezávisle na FPS)
+    move_delay = BASE_MOVE_DELAY   # za jak dlouho (milisekund) se had pohne
+    move_timer = 0                 # počítadlo uplynulého času
+
     apple_sound = pygame.mixer.Sound("sounds/jablko_snezeni.wav")
     game_over_sound = pygame.mixer.Sound("sounds/game_over.wav")
 
@@ -111,6 +115,12 @@ def main():
 #---- HLAVNÍ HRACÍ SMYČKA ----#
 # ----------------------------------------- #
     while True:
+        dt = clock.tick(FPS)   # kolik milisekund uplynulo od minulého snímku
+        move_timer += dt
+
+        # ----------------------------------------- #
+        #---- ZPRACOVÁNÍ UDÁLOSTÍ ----#
+        # ----------------------------------------- #
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit()
@@ -124,7 +134,8 @@ def main():
                 #   Restart přes klávesu R
                 if not game["alive"] and event.key == pygame.K_r:
                     game = reset_game()
-                    current_fps = BASE_FPS
+                    move_delay = BASE_MOVE_DELAY   # reset rychlosti
+                    move_timer = 0
                     continue
 
                 #   Pauza
@@ -143,37 +154,42 @@ def main():
                     new_direction = key_direction[event.key]
                     if new_direction != OPPOSITE.get(game["direction"]):
                         game["next_direction"] = new_direction
-    # ----------------------------------------- #
-    #---- LOGIKA HRY ----#
-    # ----------------------------------------- #
 
-        if game["alive"] and not game["paused"]:
-            game["direction"] = game["next_direction"]
-            head = game["snake"][0]
-            dx, dy = game["direction"]
-            new_head = (head[0] + dx, head[1] + dy)
+        # ----------------------------------------- #
+        #---- LOGIKA HRY ----#
+        # ----------------------------------------- #
+        if move_timer >= move_delay:
+            move_timer = 0   # vynuluje počítadlo
 
-            #   Kolize se zdí
-            if not (0 <= new_head[0] < GRID_WIDTH and 0 <= new_head[1] < GRID_HEIGHT):
-                game["alive"] = False
-                game_over_sound.play()
+            if game["alive"] and not game["paused"]:
+                game["direction"] = game["next_direction"]
+                head = game["snake"][0]
+                dx, dy = game["direction"]
+                new_head = (head[0] + dx, head[1] + dy)
 
-            #   Kolize se sebou
-            elif new_head in game["snake"]:
-                game["alive"] = False
-                game_over_sound.play()
+                #   Kolize se zdí
+                if not (0 <= new_head[0] < GRID_WIDTH and 0 <= new_head[1] < GRID_HEIGHT):
+                    game["alive"] = False
+                    game_over_sound.play()
 
-            else:
-                game["snake"].insert(0, new_head)
+                #   Kolize se sebou
+                elif new_head in game["snake"]:
+                    game["alive"] = False
+                    game_over_sound.play()
 
-                #   Jestli snědl jablko
-                if new_head == game["apple"]:
-                    game["score"] += 1
-                    game["apple"] = random_apple(set(game["snake"]))
-                    current_fps = BASE_FPS + (game["score"] // 5) * SPEED_INCREASE
-                    apple_sound.play()
                 else:
-                    game["snake"].pop()  #odstraní ocas
+                    game["snake"].insert(0, new_head)
+
+                    #   Jestli snědl jablko
+                    if new_head == game["apple"]:
+                        game["score"] += 1
+                        game["apple"] = random_apple(set(game["snake"]))
+                        #   Zrychlení – menší delay = rychlejší had
+                        move_delay = max(50, BASE_MOVE_DELAY - (game["score"] // 5) * 20)
+                        apple_sound.play()
+                    else:
+                        game["snake"].pop()  # odstraní ocas
+
         # ----------------------------------------- #
         #---- RENDERING ----#
         # ----------------------------------------- #
@@ -214,36 +230,47 @@ def main():
         draw_rounded_rect(screen, APPLE_SHINE_COLOR, shine_rect, 6)
 
         #   Had
-        for i, (sx, sy) in enumerate(game["snake"]):
-            color = SNAKE_HEAD_COLOR if i == 0 else SNAKE_BODY_COLOR
-            segment_rect = pygame.Rect(
-                pixel_x(sx) + 1, pixel_y(sy) + 1,
-                TILE_SIZE - 2, TILE_SIZE - 2
-            )
-            draw_rounded_rect(screen, color, segment_rect, 6)
+        if len(game["snake"]) > 1:
+            points = []
+            for (sx, sy) in game["snake"]:
+                center = (pixel_x(sx) + TILE_SIZE // 2,
+                          pixel_y(sy) + TILE_SIZE // 2)
+                points.append(center)
+            pygame.draw.lines(screen, SNAKE_BODY_COLOR, False, points, TILE_SIZE - 6)
 
-            #   Oči na hadovi
-            if i == 0:
-                dx, dy = game["direction"]
-                center_x = pixel_x(sx) + TILE_SIZE // 2
-                center_y = pixel_y(sy) + TILE_SIZE // 2
+        #   Zaoblení kloubů a konců
+        radius = (TILE_SIZE - 6) // 2
+        for (sx, sy) in game["snake"]:
+            center = (pixel_x(sx) + TILE_SIZE // 2,
+                pixel_y(sy) + TILE_SIZE // 2)
+            pygame.draw.circle(screen, SNAKE_BODY_COLOR, center, radius)
 
-                EYE_RADIUS = max(2, TILE_SIZE // 3)
-                PUPIL_RADIUS = max(1, EYE_RADIUS // 2)
-                offset = EYE_RADIUS // 1    #   Jak daleko jsou oči od středu
+        #   Hlava (jinou barvou)
+        hx, hy = game["snake"][0]
+        head_center = (pixel_x(hx) + TILE_SIZE // 2,
+            pixel_y(hy) + TILE_SIZE // 2)
+        pygame.draw.circle(screen, SNAKE_HEAD_COLOR, head_center, radius)
 
-                if dx == 0:  #  nahoru/dolu -> oči vlevo a vpravo
-                    eye1 = (center_x - offset, center_y + dy * 3)
-                    eye2 = (center_x + offset, center_y + dy * 3)
-                else:  #    vlevo/vpravo -> oči nahoru a dolu
-                    eye1 = (center_x + dx * 3, center_y - offset)
-                    eye2 = (center_x + dx * 3, center_y + offset)
-                #   Oči
-                pygame.draw.circle(screen, (255, 255, 255), eye1, EYE_RADIUS)
-                pygame.draw.circle(screen, (255, 255, 255), eye2, EYE_RADIUS)
-                #   Zorničky
-                pygame.draw.circle(screen, (20, 20, 40), eye1, PUPIL_RADIUS)
-                pygame.draw.circle(screen, (20, 20, 40), eye2, PUPIL_RADIUS)
+        #   Oči na hlavě
+        dx, dy = game["direction"]
+        center_x = head_center[0]
+        center_y = head_center[1]
+
+        EYE_RADIUS = max(2, TILE_SIZE // 3)
+        PUPIL_RADIUS = max(1, EYE_RADIUS // 2)
+        offset = EYE_RADIUS
+
+        if dx == 0:
+            eye1 = (center_x - offset, center_y + dy * 3)
+            eye2 = (center_x + offset, center_y + dy * 3)
+        else:
+            eye1 = (center_x + dx * 3, center_y - offset)
+            eye2 = (center_x + dx * 3, center_y + offset)
+
+        pygame.draw.circle(screen, (255, 255, 255), eye1, EYE_RADIUS)
+        pygame.draw.circle(screen, (255, 255, 255), eye2, EYE_RADIUS)
+        pygame.draw.circle(screen, (20, 20, 40), eye1, PUPIL_RADIUS)
+        pygame.draw.circle(screen, (20, 20, 40), eye2, PUPIL_RADIUS)
 
         #   Pauza
         if game["paused"]:
@@ -279,7 +306,6 @@ def main():
             screen.blit(re_text, re_text.get_rect(center=(center_x, center_y + 55)))
 
         pygame.display.flip()
-        clock.tick(current_fps)
 
 
 if __name__ == "__main__":
