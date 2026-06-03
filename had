@@ -7,7 +7,7 @@ import sys
 #---- NASTAVENÍ OKNA ----#
 # ----------------------------------------- #
 TILE_SIZE = 50  # velikost jednoho políčka v pixelech
-GRID_WIDTH, GRID_HEIGHT = 10, 10  # počet políček (šířka × výška) hrací plochy
+GRID_WIDTH, GRID_HEIGHT = 10, 9  # počet políček (šířka × výška) hrací plochy
 SCORE_BAR_HEIGHT = 50  # výška horního pásu se skóre v pixelech
 
 WINDOW_WIDTH = GRID_WIDTH * TILE_SIZE
@@ -75,12 +75,13 @@ def main():
     pygame.display.set_caption("🐍 Snake")
     clock = pygame.time.Clock()
 
-    #   Časovač pohybu (řídí rychlost hada nezávisle na FPS)
+    #   Časovač pohybu (nezávislé na FPS)
     move_delay = BASE_MOVE_DELAY   # za jak dlouho (milisekund) se had pohne
     move_timer = 0                 # počítadlo uplynulého času
 
     apple_sound = pygame.mixer.Sound("sounds/jablko_snezeni.wav")
     game_over_sound = pygame.mixer.Sound("sounds/game_over.wav")
+    move_sound = pygame.mixer.Sound("sounds/pohyb_zvuk.wav")
 
     apple_sound.set_volume(1.0)
     game_over_sound.set_volume(0.5)
@@ -154,6 +155,7 @@ def main():
                     new_direction = key_direction[event.key]
                     if new_direction != OPPOSITE.get(game["direction"]):
                         game["next_direction"] = new_direction
+                        move_sound.play()
 
         # ----------------------------------------- #
         #---- LOGIKA HRY ----#
