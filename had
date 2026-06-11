@@ -1,21 +1,18 @@
 import pygame
 import random
 import sys
+import hashlib
 
 
 # ----------------------------------------- #
-#---- NASTAVENÍ OKNA ----#
+#---- KONSTANTY ----#
 # ----------------------------------------- #
-TILE_SIZE = 50  # velikost jednoho políčka v pixelech
-GRID_WIDTH, GRID_HEIGHT = 10, 9  # počet políček (šířka × výška) hrací plochy
 SCORE_BAR_HEIGHT = 50  # výška horního pásu se skóre v pixelech
+FPS = 120              # plynulé vykreslování (pevné)
 
-WINDOW_WIDTH = GRID_WIDTH * TILE_SIZE
-GAME_AREA_HEIGHT = GRID_HEIGHT * TILE_SIZE
-WINDOW_HEIGHT = GAME_AREA_HEIGHT + SCORE_BAR_HEIGHT  # celkové okno
-
-FPS = 120               # plynulé vykreslování (pevné)
-BASE_MOVE_DELAY = 150  # had se pohne každých 150 ms (výchozí rychlost)
+#   Meze nastavení (od–do)
+MIN_GRID, MAX_GRID = 6, 20        # rozsah velikosti pole
+MIN_DELAY, MAX_DELAY = 80, 250    # rozsah rychlosti (ms)
 
 # ----------------------------------------- #
 #---- BARVY ----#
@@ -23,19 +20,23 @@ BASE_MOVE_DELAY = 150  # had se pohne každých 150 ms (výchozí rychlost)
 SCORE_BAR_COLOR = (50, 90, 50)
 SCORE_TEXT_COLOR = (240, 240, 220)
 
-#   Dvoubarevné pozadí (sudé a liché)
 LIGHT_TILE_COLOR = (170, 215, 90)
 DARK_TILE_COLOR = (160, 205, 75)
 
-# Had a jablko
 SNAKE_BODY_COLOR = (50, 100, 220)
 SNAKE_HEAD_COLOR = (70, 130, 240)
 APPLE_COLOR = (220, 50, 50)
 APPLE_SHINE_COLOR = (255, 130, 130)
 
-# Text a game over
 TEXT_COLOR = (240, 240, 240)
 GAME_OVER_COLOR = (20, 30, 20, 200)
+
+#   Menu / nastavení
+MENU_BG_COLOR = (40, 70, 40)
+BUTTON_COLOR = (70, 110, 70)
+BUTTON_HOVER_COLOR = (100, 150, 100)
+TAJNY_KLIC = "muj_had"
+BUTTON_TEXT_COLOR = (240, 240, 240)
 
 # ----------------------------------------- #
 #---- SMĚR ----#
@@ -45,58 +46,109 @@ DOWN = (0, 1)
 LEFT = (-1, 0)
 RIGHT = (1, 0)
 
-#   Opačné směry – aby se had nemohl otočit o 180°
 OPPOSITE = {UP: DOWN, DOWN: UP, LEFT: RIGHT, RIGHT: LEFT}
 
 
-def random_apple(snake_body):
+def random_apple(snake_body, grid_width, grid_height):
     while True:
-        position = (random.randint(0, GRID_WIDTH - 1), random.randint(0, GRID_HEIGHT - 1))
+        position = (random.randint(0, grid_width - 1), random.randint(0, grid_height - 1))
         if position not in snake_body:
             return position
 
+def hash_score(value):
+    #   Vytvoří otisk skóre
+    text = f"{value}{TAJNY_KLIC}"
+    return hashlib.md5(text.encode()).hexdigest()
+def save_top_score(value):
+    #   Uloží rekord do souboru.
+    with open("top_score.txt", "w") as f:
+        f.write(f"{value}\n{hash_score(value)}")
+
+def load_top_score():
+    #   Načte rekord ze souboru. Pokud neexistuje, vrátí 0.
+    try:
+        with open("top_score.txt", "r") as f:
+            lines = f.read().splitlines()
+            value = int(lines[0])
+            if lines[1] == hash_score(value):       #   Ověří otisk
+                return value
+            else:
+                return 0                            #   otisk nesedí = někdo změnil soubor
+    except:
+        return 0
 
 def draw_rounded_rect(surface, color, rect, radius=6):
     pygame.draw.rect(surface, color, rect, border_radius=radius)
 
 
-def pixel_x(grid_x):
-    return grid_x * TILE_SIZE
-
-
-def pixel_y(grid_y):
-    return grid_y * TILE_SIZE + SCORE_BAR_HEIGHT
+def draw_button(screen, font, text, rect, mouse_pos):
+    #   Nakreslí tlačítko a vrátí svůj rect (pro detekci kliknutí).
+    #   Zvýraznění když je myš nad tlačítkem
+    if rect.collidepoint(mouse_pos):
+        color = BUTTON_HOVER_COLOR
+    else:
+        color = BUTTON_COLOR
+    pygame.draw.rect(screen, color, rect, border_radius=8)
+    #   Text na střed tlačítka
+    label = font.render(text, True, BUTTON_TEXT_COLOR)
+    label_rect = label.get_rect(center=rect.center)
+    screen.blit(label, label_rect)
+    return rect
 
 
 def main():
     pygame.init()
     pygame.mixer.init()
-    screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
-    pygame.display.set_caption("🐍 Snake")
     clock = pygame.time.Clock()
 
-    #   Časovač pohybu (nezávislé na FPS)
-    move_delay = BASE_MOVE_DELAY   # za jak dlouho (milisekund) se had pohne
-    move_timer = 0                 # počítadlo uplynulého času
-
-    apple_sound = pygame.mixer.Sound("sounds/jablko_snezeni.wav")
-    game_over_sound = pygame.mixer.Sound("sounds/game_over.wav")
-    move_sound = pygame.mixer.Sound("sounds/pohyb_zvuk.wav")
-
+    #   Zvuky
+    apple_sound = pygame.mixer.Sound("sounds/sounds_jablko_snezeni.wav")
+    game_over_sound = pygame.mixer.Sound("sounds/sounds_game_over.wav")
+    move_sound = pygame.mixer.Sound("sounds/sounds_pohyb_zvuk.wav")
     apple_sound.set_volume(1.0)
     game_over_sound.set_volume(0.5)
 
-# ----------------------------------------- #
-#---- FONTY ----#
-# ----------------------------------------- #
-
+    #   Fonty
     FONT_LARGE = 48
     FONT_MEDIUM = FONT_LARGE // 2  # = 24
-    FONT_SMALL = FONT_LARGE // 3  # = 16
-
+    FONT_SMALL = FONT_LARGE // 3   # = 16
     font_large = pygame.font.SysFont("Segoe UI", FONT_LARGE, bold=True)
     font_medium = pygame.font.SysFont("Segoe UI", FONT_MEDIUM, bold=True)
     font_small = pygame.font.SysFont("Segoe UI", FONT_SMALL)
+
+    top_score = load_top_score()
+
+    # ----------------------------------------- #
+    #---- NASTAVITELNÉ HODNOTY ----#
+    # ----------------------------------------- #
+    settings = {
+        "tile_size": 50,        # velikost dlaždice v pixelech
+        "grid_width": 10,       # počet políček (na šířku)
+        "grid_height": 9,      # počet políček (na výšku)
+        "base_delay": 150,      # výchozí rychlost (ms)
+    }
+
+    #   Stav aplikace: "menu", "settings", "playing"
+    state = "menu"
+
+    #   Okno pro menu (pevná velikost)
+    MENU_WIDTH, MENU_HEIGHT = 500, 500
+    screen = pygame.display.set_mode((MENU_WIDTH, MENU_HEIGHT))
+    pygame.display.set_caption("🐍 Snake")
+
+    #   Proměnné hry (naplní se při startu hry)
+    game = None
+    move_delay = settings["base_delay"]
+    move_timer = 0
+    TILE_SIZE = settings["tile_size"]
+    GRID_WIDTH = settings["grid_width"]
+    GRID_HEIGHT = settings["grid_height"]
+
+    def pixel_x(grid_x):
+        return grid_x * TILE_SIZE
+
+    def pixel_y(grid_y):
+        return grid_y * TILE_SIZE + SCORE_BAR_HEIGHT
 
     def reset_game():
         start = (GRID_WIDTH // 2, GRID_HEIGHT // 2)
@@ -104,210 +156,295 @@ def main():
             "snake": [start],
             "direction": RIGHT,
             "next_direction": RIGHT,
-            "apple": random_apple({start}),
+            "apple": random_apple({start}, GRID_WIDTH, GRID_HEIGHT),
             "score": 0,
             "alive": True,
             "paused": False,
+            "top_score": load_top_score(),
         }
 
-    game = reset_game()
+    def start_game():
+        #   Připraví okno a hru podle aktuálního nastavení.
+        nonlocal screen, TILE_SIZE, GRID_WIDTH, GRID_HEIGHT, game, move_delay, move_timer
+        TILE_SIZE = settings["tile_size"]
+        GRID_WIDTH = settings["grid_width"]
+        GRID_HEIGHT = settings["grid_height"]
+        window_width = GRID_WIDTH * TILE_SIZE
+        window_height = GRID_HEIGHT * TILE_SIZE + SCORE_BAR_HEIGHT
+        screen = pygame.display.set_mode((window_width, window_height))
+        game = reset_game()
+        move_delay = settings["base_delay"]
+        move_timer = 0
 
-# ----------------------------------------- #
-#---- HLAVNÍ HRACÍ SMYČKA ----#
-# ----------------------------------------- #
+    # ----------------------------------------- #
+    #---- HLAVNÍ SMYČKA ----#
+    # ----------------------------------------- #
     while True:
-        dt = clock.tick(FPS)   # kolik milisekund uplynulo od minulého snímku
-        move_timer += dt
+        dt = clock.tick(FPS)
+        mouse_pos = pygame.mouse.get_pos()
 
-        # ----------------------------------------- #
-        #---- ZPRACOVÁNÍ UDÁLOSTÍ ----#
-        # ----------------------------------------- #
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                pygame.quit()
-                sys.exit()
+        # ========================================= #
+        #   STAV: MENU
+        # ========================================= #
+        if state == "menu":
+            #   Definice tlačítek
+            play_btn = pygame.Rect(150, 200, 200, 60)
+            settings_btn = pygame.Rect(150, 290, 200, 60)
+            quit_btn = pygame.Rect(150, 380, 200, 60)
 
-            if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_ESCAPE:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
                     pygame.quit()
                     sys.exit()
+                if event.type == pygame.MOUSEBUTTONDOWN:
+                    if play_btn.collidepoint(event.pos):
+                        start_game()
+                        state = "playing"
+                    elif settings_btn.collidepoint(event.pos):
+                        state = "settings"
+                    elif quit_btn.collidepoint(event.pos):
+                        pygame.quit()
+                        sys.exit()
 
-                #   Restart přes klávesu R
-                if not game["alive"] and event.key == pygame.K_r:
-                    game = reset_game()
-                    move_delay = BASE_MOVE_DELAY   # reset rychlosti
-                    move_timer = 0
-                    continue
+            #   Vykreslení menu
+            screen.fill(MENU_BG_COLOR)
+            title = font_large.render("🐍 SNAKE", True, TEXT_COLOR)
+            screen.blit(title, title.get_rect(center=(MENU_WIDTH // 2, 100)))
 
-                #   Pauza
-                if event.key == pygame.K_SPACE and game["alive"]:
-                    game["paused"] = not game["paused"]
-                    continue
+            draw_button(screen, font_medium, "Hrát", play_btn, mouse_pos)
+            draw_button(screen, font_medium, "Nastavení", settings_btn, mouse_pos)
+            draw_button(screen, font_medium, "Konec", quit_btn, mouse_pos)
 
-                #   Ovládání přes klávesy (arrows + WASD)
-                key_direction = {
-                    pygame.K_UP: UP, pygame.K_w: UP,
-                    pygame.K_DOWN: DOWN, pygame.K_s: DOWN,
-                    pygame.K_LEFT: LEFT, pygame.K_a: LEFT,
-                    pygame.K_RIGHT: RIGHT, pygame.K_d: RIGHT,
-                }
-                if event.key in key_direction and game["alive"]:
-                    new_direction = key_direction[event.key]
-                    if new_direction != OPPOSITE.get(game["direction"]):
-                        game["next_direction"] = new_direction
-                        move_sound.play()
+            pygame.display.flip()
 
-        # ----------------------------------------- #
-        #---- LOGIKA HRY ----#
-        # ----------------------------------------- #
-        if move_timer >= move_delay:
-            move_timer = 0   # vynuluje počítadlo
+        # ========================================= #
+        #   STAV: NASTAVENÍ
+        # ========================================= #
+        elif state == "settings":
+            #   Šířka pole
+            width_minus = pygame.Rect(280, 130, 50, 50)
+            width_plus = pygame.Rect(400, 130, 50, 50)
+            #   Výška pole
+            height_minus = pygame.Rect(280, 210, 50, 50)
+            height_plus = pygame.Rect(400, 210, 50, 50)
+            #   Rychlost
+            speed_minus = pygame.Rect(280, 290, 50, 50)
+            speed_plus = pygame.Rect(400, 290, 50, 50)
+            #   Zpět
+            back_btn = pygame.Rect(150, 390, 200, 60)
 
-            if game["alive"] and not game["paused"]:
-                game["direction"] = game["next_direction"]
-                head = game["snake"][0]
-                dx, dy = game["direction"]
-                new_head = (head[0] + dx, head[1] + dy)
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    pygame.quit()
+                    sys.exit()
+                if event.type == pygame.MOUSEBUTTONDOWN:
+                    #   Šířka
+                    if width_minus.collidepoint(event.pos):
+                        settings["grid_width"] = max(MIN_GRID, settings["grid_width"] - 1)
+                    elif width_plus.collidepoint(event.pos):
+                        settings["grid_width"] = min(MAX_GRID, settings["grid_width"] + 1)
+                    #   Výška
+                    elif height_minus.collidepoint(event.pos):
+                        settings["grid_height"] = max(MIN_GRID, settings["grid_height"] - 1)
+                    elif height_plus.collidepoint(event.pos):
+                        settings["grid_height"] = min(MAX_GRID, settings["grid_height"] + 1)
+                    #   Rychlost
+                    elif speed_minus.collidepoint(event.pos):
+                        settings["base_delay"] = min(MAX_DELAY, settings["base_delay"] + 10)
+                    elif speed_plus.collidepoint(event.pos):
+                        settings["base_delay"] = max(MIN_DELAY, settings["base_delay"] - 10)
+                    elif back_btn.collidepoint(event.pos):
+                        state = "menu"
 
-                #   Kolize se zdí
-                if not (0 <= new_head[0] < GRID_WIDTH and 0 <= new_head[1] < GRID_HEIGHT):
-                    game["alive"] = False
-                    game_over_sound.play()
+            #   Vykreslení nastavení
+            screen.fill(MENU_BG_COLOR)
+            title = font_large.render("Nastavení", True, TEXT_COLOR)
+            screen.blit(title, title.get_rect(center=(MENU_WIDTH // 2, 70)))
 
-                #   Kolize se sebou
-                elif new_head in game["snake"]:
-                    game["alive"] = False
-                    game_over_sound.play()
+            #   Šířka pole
+            w_label = font_small.render("Šířka:", True, TEXT_COLOR)
+            screen.blit(w_label, (50, 145))
+            draw_button(screen, font_medium, "-", width_minus, mouse_pos)
+            draw_button(screen, font_medium, "+", width_plus, mouse_pos)
+            w_value = font_medium.render(str(settings["grid_width"]), True, TEXT_COLOR)
+            screen.blit(w_value, w_value.get_rect(center=(365, 155)))
 
-                else:
-                    game["snake"].insert(0, new_head)
+            #   Výška pole
+            h_label = font_small.render("Výška:", True, TEXT_COLOR)
+            screen.blit(h_label, (50, 225))
+            draw_button(screen, font_medium, "-", height_minus, mouse_pos)
+            draw_button(screen, font_medium, "+", height_plus, mouse_pos)
+            h_value = font_medium.render(str(settings["grid_height"]), True, TEXT_COLOR)
+            screen.blit(h_value, h_value.get_rect(center=(365, 235)))
 
-                    #   Jestli snědl jablko
-                    if new_head == game["apple"]:
-                        game["score"] += 1
-                        game["apple"] = random_apple(set(game["snake"]))
-                        #   Zrychlení – menší delay = rychlejší had
-                        move_delay = max(50, BASE_MOVE_DELAY - (game["score"] // 5) * 20)
-                        apple_sound.play()
+            #   Rychlost
+            speed_label = font_small.render("Rychlost:", True, TEXT_COLOR)
+            screen.blit(speed_label, (50, 305))
+            draw_button(screen, font_medium, "-", speed_minus, mouse_pos)
+            draw_button(screen, font_medium, "+", speed_plus, mouse_pos)
+
+            #   Vyšší číslo = rychlejší (jen pro zobrazení)
+            speed_level = (MAX_DELAY - settings["base_delay"]) // 10 + 1
+            speed_value = font_medium.render(str(speed_level), True, TEXT_COLOR)
+            screen.blit(speed_value, speed_value.get_rect(center=(365, 315)))
+
+            draw_button(screen, font_medium, "Zpět", back_btn, mouse_pos)
+
+            pygame.display.flip()
+
+        # ========================================= #
+        #   STAV: HRANÍ
+        # ========================================= #
+        elif state == "playing":
+            move_timer += dt
+            window_width = GRID_WIDTH * TILE_SIZE
+            game_area_height = GRID_HEIGHT * TILE_SIZE
+
+            #   ZPRACOVÁNÍ UDÁLOSTÍ
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    pygame.quit()
+                    sys.exit()
+                if event.type == pygame.KEYDOWN:
+                    #   ESC = zpět do menu
+                    if event.key == pygame.K_ESCAPE:
+                        if not game["alive"]:
+                            state = "menu"
+                            screen = pygame.display.set_mode((MENU_WIDTH, MENU_HEIGHT))
+                        continue
+                    if not game["alive"] and event.key == pygame.K_r:
+                        game = reset_game()
+                        move_delay = settings["base_delay"]
+                        move_timer = 0
+                        continue
+                    #   Pauza
+                    if event.key == pygame.K_SPACE and game["alive"]:
+                        game["paused"] = not game["paused"]
+                        continue
+                    #   Ovládání směru
+                    key_direction = {
+                        pygame.K_UP: UP, pygame.K_w: UP,
+                        pygame.K_DOWN: DOWN, pygame.K_s: DOWN,
+                        pygame.K_LEFT: LEFT, pygame.K_a: LEFT,
+                        pygame.K_RIGHT: RIGHT, pygame.K_d: RIGHT,
+                    }
+                    if event.key in key_direction and game["alive"]:
+                        new_direction = key_direction[event.key]
+                        if new_direction != OPPOSITE.get(game["direction"]):
+                            game["next_direction"] = new_direction
+                            move_sound.play()
+
+            #   LOGIKA HRY
+            if move_timer >= move_delay:
+                move_timer = 0
+                if game["alive"] and not game["paused"]:
+                    game["direction"] = game["next_direction"]
+                    head = game["snake"][0]
+                    dx, dy = game["direction"]
+                    new_head = (head[0] + dx, head[1] + dy)
+
+                    if not (0 <= new_head[0] < GRID_WIDTH and 0 <= new_head[1] < GRID_HEIGHT):
+                        game["alive"] = False
+                        game_over_sound.play()
+                    elif new_head in game["snake"]:
+                        game["alive"] = False
+                        game_over_sound.play()
                     else:
-                        game["snake"].pop()  # odstraní ocas
+                        game["snake"].insert(0, new_head)
+                        if new_head == game["apple"]:
+                            game["score"] += 1
+                            if game["score"] > game["top_score"]:
+                                game["top_score"] = game["score"]
+                                save_top_score(game["top_score"])
+                            game["apple"] = random_apple(set(game["snake"]), GRID_WIDTH, GRID_HEIGHT)
+                            move_delay = max(50, settings["base_delay"] - (game["score"] // 5) * 20)
+                            apple_sound.play()
+                        else:
+                            game["snake"].pop()
 
-        # ----------------------------------------- #
-        #---- RENDERING ----#
-        # ----------------------------------------- #
+            #   RENDERING
+            #   Horní pás se skóre
+            bar_rect = pygame.Rect(0, 0, window_width, SCORE_BAR_HEIGHT)
+            pygame.draw.rect(screen, SCORE_BAR_COLOR, bar_rect)
+            score_text = font_medium.render(f"Score: {game['score']}    Top: {game['top_score']}", True, SCORE_TEXT_COLOR)
+            score_rect = score_text.get_rect(center=(window_width // 2, SCORE_BAR_HEIGHT // 2))
+            screen.blit(score_text, score_rect)
 
-        #   Horní okno se skóre
-        bar_rect = pygame.Rect(0, 0, WINDOW_WIDTH, SCORE_BAR_HEIGHT)
-        pygame.draw.rect(screen, SCORE_BAR_COLOR, bar_rect)
+            #   Dvoubarevné pozadí
+            for row in range(GRID_HEIGHT):
+                for col in range(GRID_WIDTH):
+                    if (row + col) % 2 == 0:
+                        tile_color = LIGHT_TILE_COLOR
+                    else:
+                        tile_color = DARK_TILE_COLOR
+                    tile_rect = pygame.Rect(pixel_x(col), pixel_y(row), TILE_SIZE, TILE_SIZE)
+                    pygame.draw.rect(screen, tile_color, tile_rect)
 
-        score_text = font_medium.render(
-            f"Score: {game['score']}", True, SCORE_TEXT_COLOR
-        )
-        score_rect = score_text.get_rect(
-            center=(WINDOW_WIDTH // 2, SCORE_BAR_HEIGHT // 2)
-        )
-        screen.blit(score_text, score_rect)
+            #   Jablko
+            ax, ay = game["apple"]
+            apple_rect = pygame.Rect(pixel_x(ax) + 2, pixel_y(ay) + 2, TILE_SIZE - 4, TILE_SIZE - 4)
+            draw_rounded_rect(screen, APPLE_COLOR, apple_rect, 8)
+            shine_rect = pygame.Rect(pixel_x(ax) + 5, pixel_y(ay) + 5, 8, 8)
+            draw_rounded_rect(screen, APPLE_SHINE_COLOR, shine_rect, 6)
 
-        #   Dvoubarevné pozadí (sudé/liché)
-        for row in range(GRID_HEIGHT):
-            for col in range(GRID_WIDTH):
-                if (row + col) % 2 == 0:
-                    tile_color = LIGHT_TILE_COLOR
-                else:
-                    tile_color = DARK_TILE_COLOR
-                tile_rect = pygame.Rect(
-                    pixel_x(col), pixel_y(row),
-                    TILE_SIZE, TILE_SIZE
-                )
-                pygame.draw.rect(screen, tile_color, tile_rect)
+            #   Had - tělo jako spojitá čára
+            if len(game["snake"]) > 1:
+                points = []
+                for (sx, sy) in game["snake"]:
+                    center = (pixel_x(sx) + TILE_SIZE // 2, pixel_y(sy) + TILE_SIZE // 2)
+                    points.append(center)
+                pygame.draw.lines(screen, SNAKE_BODY_COLOR, False, points, TILE_SIZE - 6)
 
-        #   Jablko
-        ax, ay = game["apple"]
-        apple_rect = pygame.Rect(
-            pixel_x(ax) + 2, pixel_y(ay) + 2,
-            TILE_SIZE - 4, TILE_SIZE - 4
-        )
-        draw_rounded_rect(screen, APPLE_COLOR, apple_rect, 8)
-        shine_rect = pygame.Rect(pixel_x(ax) + 5, pixel_y(ay) + 5, 8, 8)
-        draw_rounded_rect(screen, APPLE_SHINE_COLOR, shine_rect, 6)
-
-        #   Had
-        if len(game["snake"]) > 1:
-            points = []
+            #   Zaoblení kloubů
+            radius = (TILE_SIZE - 6) // 2
             for (sx, sy) in game["snake"]:
-                center = (pixel_x(sx) + TILE_SIZE // 2,
-                          pixel_y(sy) + TILE_SIZE // 2)
-                points.append(center)
-            pygame.draw.lines(screen, SNAKE_BODY_COLOR, False, points, TILE_SIZE - 6)
+                center = (pixel_x(sx) + TILE_SIZE // 2, pixel_y(sy) + TILE_SIZE // 2)
+                pygame.draw.circle(screen, SNAKE_BODY_COLOR, center, radius)
 
-        #   Zaoblení kloubů a konců
-        radius = (TILE_SIZE - 6) // 2
-        for (sx, sy) in game["snake"]:
-            center = (pixel_x(sx) + TILE_SIZE // 2,
-                pixel_y(sy) + TILE_SIZE // 2)
-            pygame.draw.circle(screen, SNAKE_BODY_COLOR, center, radius)
+            #   Hlava
+            hx, hy = game["snake"][0]
+            head_center = (pixel_x(hx) + TILE_SIZE // 2, pixel_y(hy) + TILE_SIZE // 2)
+            pygame.draw.circle(screen, SNAKE_HEAD_COLOR, head_center, radius)
 
-        #   Hlava (jinou barvou)
-        hx, hy = game["snake"][0]
-        head_center = (pixel_x(hx) + TILE_SIZE // 2,
-            pixel_y(hy) + TILE_SIZE // 2)
-        pygame.draw.circle(screen, SNAKE_HEAD_COLOR, head_center, radius)
+            #   Oči
+            dx, dy = game["direction"]
+            center_x = head_center[0]
+            center_y = head_center[1]
+            EYE_RADIUS = max(2, TILE_SIZE // 3)
+            PUPIL_RADIUS = max(1, EYE_RADIUS // 2)
+            offset = EYE_RADIUS
+            if dx == 0:
+                eye1 = (center_x - offset, center_y + dy * 3)
+                eye2 = (center_x + offset, center_y + dy * 3)
+            else:
+                eye1 = (center_x + dx * 3, center_y - offset)
+                eye2 = (center_x + dx * 3, center_y + offset)
+            pygame.draw.circle(screen, (255, 255, 255), eye1, EYE_RADIUS)
+            pygame.draw.circle(screen, (255, 255, 255), eye2, EYE_RADIUS)
+            pygame.draw.circle(screen, (20, 20, 40), eye1, PUPIL_RADIUS)
+            pygame.draw.circle(screen, (20, 20, 40), eye2, PUPIL_RADIUS)
 
-        #   Oči na hlavě
-        dx, dy = game["direction"]
-        center_x = head_center[0]
-        center_y = head_center[1]
+            #   Pauza
+            if game["paused"]:
+                pause_text = font_medium.render("⏸  PAUSE  (spacebar)", True, TEXT_COLOR)
+                pause_rect = pause_text.get_rect(center=(window_width // 2, SCORE_BAR_HEIGHT + game_area_height // 2))
+                screen.blit(pause_text, pause_rect)
 
-        EYE_RADIUS = max(2, TILE_SIZE // 3)
-        PUPIL_RADIUS = max(1, EYE_RADIUS // 2)
-        offset = EYE_RADIUS
+            #   Game Over
+            if not game["alive"]:
+                overlay = pygame.Surface((window_width, game_area_height), pygame.SRCALPHA)
+                overlay.fill(GAME_OVER_COLOR)
+                screen.blit(overlay, (0, SCORE_BAR_HEIGHT))
+                cx = window_width // 2
+                cy = SCORE_BAR_HEIGHT + game_area_height // 2
+                go_text = font_large.render("GAME OVER", True, APPLE_COLOR)
+                screen.blit(go_text, go_text.get_rect(center=(cx, cy - 30)))
+                sk_text = font_medium.render(f"Score: {game['score']}    Top: {game['top_score']}", True, TEXT_COLOR)
+                screen.blit(sk_text, sk_text.get_rect(center=(cx, cy + 20)))
+                re_text = font_small.render("R = restart   ESC = menu", True, TEXT_COLOR)
+                screen.blit(re_text, re_text.get_rect(center=(cx, cy + 55)))
 
-        if dx == 0:
-            eye1 = (center_x - offset, center_y + dy * 3)
-            eye2 = (center_x + offset, center_y + dy * 3)
-        else:
-            eye1 = (center_x + dx * 3, center_y - offset)
-            eye2 = (center_x + dx * 3, center_y + offset)
-
-        pygame.draw.circle(screen, (255, 255, 255), eye1, EYE_RADIUS)
-        pygame.draw.circle(screen, (255, 255, 255), eye2, EYE_RADIUS)
-        pygame.draw.circle(screen, (20, 20, 40), eye1, PUPIL_RADIUS)
-        pygame.draw.circle(screen, (20, 20, 40), eye2, PUPIL_RADIUS)
-
-        #   Pauza
-        if game["paused"]:
-            pause_text = font_medium.render(
-                "⏸  PAUSE  (spacebar)", True, TEXT_COLOR
-            )
-            game_area_center = SCORE_BAR_HEIGHT + GAME_AREA_HEIGHT // 2
-            pause_rect = pause_text.get_rect(
-                center=(WINDOW_WIDTH // 2, game_area_center)
-            )
-            screen.blit(pause_text, pause_rect)
-
-        #   Game Over
-        if not game["alive"]:
-            overlay = pygame.Surface(
-                (WINDOW_WIDTH, GAME_AREA_HEIGHT), pygame.SRCALPHA
-            )
-            overlay.fill(GAME_OVER_COLOR)
-            screen.blit(overlay, (0, SCORE_BAR_HEIGHT))
-
-            center_x = WINDOW_WIDTH // 2
-            center_y = SCORE_BAR_HEIGHT + GAME_AREA_HEIGHT // 2
-
-            go_text = font_large.render("GAME OVER", True, APPLE_COLOR)
-            screen.blit(go_text, go_text.get_rect(center=(center_x, center_y - 30)))
-
-            sk_text = font_medium.render(
-                f"Score: {game['score']}", True, TEXT_COLOR
-            )
-            screen.blit(sk_text, sk_text.get_rect(center=(center_x, center_y + 20)))
-
-            re_text = font_small.render("Press R to restart", True, TEXT_COLOR)
-            screen.blit(re_text, re_text.get_rect(center=(center_x, center_y + 55)))
-
-        pygame.display.flip()
+            pygame.display.flip()
 
 
 if __name__ == "__main__":
